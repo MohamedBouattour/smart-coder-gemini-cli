@@ -36,6 +36,7 @@ import { toContents } from '../code_assist/converter.js';
 import { isStructuredError } from '../utils/quotaErrorDetection.js';
 import { runInDevTraceSpan, type SpanMetadata } from '../telemetry/trace.js';
 import { debugLogger } from '../utils/debugLogger.js';
+import { BenchmarkLogger } from './benchmarkLogger.js';
 
 interface StructuredError {
   status: number;
@@ -248,6 +249,30 @@ export class LoggingContentGenerator implements ContentGenerator {
             req.config,
             serverDetails,
           );
+
+          const benchmarkLogger = new BenchmarkLogger(
+            this.config.getProjectRoot(),
+          );
+          benchmarkLogger
+            .log({
+              timestamp: new Date().toISOString(),
+              contextFiles: Array.from(
+                this.config.getContextManager()?.getLoadedPaths() ?? [],
+              ),
+              tokens: {
+                input: response.usageMetadata?.promptTokenCount ?? 0,
+                output: response.usageMetadata?.candidatesTokenCount ?? 0,
+                total: response.usageMetadata?.totalTokenCount ?? 0,
+              },
+              model: response.modelVersion || req.model,
+              durationMs,
+              requestPayloadSize: JSON.stringify(contents).length,
+              status: 'success',
+            })
+            .catch((err: unknown) =>
+              debugLogger.debug('Failed to log benchmark result', err),
+            );
+
           this.config
             .refreshUserQuotaIfStale()
             .catch((e) => debugLogger.debug('quota refresh failed', e));
@@ -380,6 +405,28 @@ export class LoggingContentGenerator implements ContentGenerator {
       this.config
         .refreshUserQuotaIfStale()
         .catch((e) => debugLogger.debug('quota refresh failed', e));
+
+      const benchmarkLogger = new BenchmarkLogger(this.config.getProjectRoot());
+      benchmarkLogger
+        .log({
+          timestamp: new Date().toISOString(),
+          contextFiles: Array.from(
+            this.config.getContextManager()?.getLoadedPaths() ?? [],
+          ),
+          tokens: {
+            input: lastUsageMetadata?.promptTokenCount ?? 0,
+            output: lastUsageMetadata?.candidatesTokenCount ?? 0,
+            total: lastUsageMetadata?.totalTokenCount ?? 0,
+          },
+          model: responses[0]?.modelVersion || req.model,
+          durationMs,
+          requestPayloadSize: JSON.stringify(requestContents).length,
+          status: 'success',
+        })
+        .catch((err: unknown) =>
+          debugLogger.debug('Failed to log benchmark result', err),
+        );
+
       spanMetadata.output = {
         streamChunks: responses.map((r) => ({
           content: r.candidates?.[0]?.content ?? null,
@@ -390,6 +437,28 @@ export class LoggingContentGenerator implements ContentGenerator {
     } catch (error) {
       spanMetadata.error = error;
       const durationMs = Date.now() - startTime;
+      const benchmarkLogger = new BenchmarkLogger(this.config.getProjectRoot());
+      benchmarkLogger
+        .log({
+          timestamp: new Date().toISOString(),
+          contextFiles: Array.from(
+            this.config.getContextManager()?.getLoadedPaths() ?? [],
+          ),
+          tokens: {
+            input: undefined,
+            output: undefined,
+            total: undefined,
+          },
+          model: responses[0]?.modelVersion || req.model,
+          durationMs: Date.now() - startTime,
+          requestPayloadSize: JSON.stringify(requestContents).length,
+          status: 'error',
+          errorMessage: String(error),
+        })
+        .catch((err: unknown) =>
+          debugLogger.debug('Failed to log benchmark result', err),
+        );
+
       this._logApiError(
         durationMs,
         error,
