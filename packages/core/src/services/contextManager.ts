@@ -73,9 +73,22 @@ export class ContextManager {
       this.config.getImportFormat(),
     );
 
-    this.markAsLoaded(
-      allContents.filter((c) => c.content !== null).map((c) => c.filePath),
-    );
+    const loadedFiles = allContents.filter((c) => c.content !== null);
+    const filePaths = loadedFiles.map((c) => c.filePath);
+
+    if (filePaths.length > 0) {
+      coreEvents.emitConsoleLog(
+        'info',
+        `Context gathering: Included ${filePaths.length} files:\n${filePaths.join('\n')}`,
+      );
+    } else {
+      coreEvents.emitConsoleLog(
+        'info',
+        'Context gathering: No files included.',
+      );
+    }
+
+    this.markAsLoaded(filePaths);
 
     return new Map(allContents.map((c) => [c.filePath, c]));
   }

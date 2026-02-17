@@ -22,6 +22,7 @@ import {
   ApiResponseEvent,
   ApiErrorEvent,
 } from '../telemetry/types.js';
+import { coreEvents } from '../utils/events.js';
 import type { Config } from '../config/config.js';
 import type { UserTierId } from '../code_assist/types.js';
 import {
@@ -149,6 +150,13 @@ export class LoggingContentGenerator implements ContentGenerator {
         responseText,
       ),
     );
+
+    if (usageMetadata) {
+      coreEvents.emitConsoleLog(
+        'info',
+        `Token Usage: Input=${usageMetadata.promptTokenCount ?? 0}, Output=${usageMetadata.candidatesTokenCount ?? 0}, Total=${usageMetadata.totalTokenCount ?? 0}`,
+      );
+    }
   }
 
   private _logApiError(
@@ -205,6 +213,11 @@ export class LoggingContentGenerator implements ContentGenerator {
           userPromptId,
           req.config,
           serverDetails,
+        );
+
+        coreEvents.emitConsoleLog(
+          'info',
+          `Generation Request: Prompt ID=${userPromptId}, Model=${req.model}, Payload Size=${JSON.stringify(contents).length} chars`,
         );
 
         try {
@@ -279,12 +292,17 @@ export class LoggingContentGenerator implements ContentGenerator {
           this.config.setLatestApiRequest(req);
         }
 
+        const contents = toContents(req.contents);
         this.logApiRequest(
-          toContents(req.contents),
+          contents,
           req.model,
           userPromptId,
           req.config,
           serverDetails,
+        );
+        coreEvents.emitConsoleLog(
+          'info',
+          `Generation Stream Request: Prompt ID=${userPromptId}, Model=${req.model}, Payload Size=${JSON.stringify(contents).length} chars`,
         );
 
         let stream: AsyncGenerator<GenerateContentResponse>;
