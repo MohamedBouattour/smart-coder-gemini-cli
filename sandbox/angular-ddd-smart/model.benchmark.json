@@ -1,0 +1,29 @@
+{
+  "prompts": [
+    {
+      "id": "feature-arch-compliance",
+      "category": "Architecture Compliance",
+      "prompt": "I need to add a feature to delete a product by its ID. Can you implement this across the full stack following our clean DDD architecture? You'll need to define the input port (use case), implement the service, update the repository interface and the in-memory adapter, and finally add a delete button in the component. "
+    },
+    {
+      "id": "bug-fix-domain",
+      "category": "Bug Fix - Domain Logic",
+      "prompt": "I noticed a bug in the `Product` domain model. It currently allows the price to be 0, but our business rule says it must be strictly positive. Can you update the validation in `Product.ts` (both constructor and setters) to throw an error if the price is 0 or less?"
+    },
+    {
+      "id": "dry-code-reuse",
+      "category": "DRY & Brother Code Awareness",
+      "prompt": "We need a new use case to update a product's price and description. Please implement an `UpdateProductDetailsUseCase`. Make sure you don't duplicate any validation logic — rely on the existing methods in the `Product` entity. Just fetch the product from the repo, mutate it using its own methods, and save it."
+    },
+    {
+      "id": "refactor-reactive",
+      "category": "Refactoring - Reactive Patterns",
+      "prompt": "The usage of `refreshList()` in the `ProductComponent` feels a bit manual. Can you refactor the `InMemoryProductRepository` to expose the list of products as a reactive stream (like a `BehaviorSubject`)? Then update the component to just subscribe to that stream using the `async` pipe."
+    },
+    {
+      "id": "unit-tests",
+      "category": "Testing",
+      "prompt": "Can you write a unit test for the `CreateProductService` using Vitest? Please mock the `ProductRepository` and verify that the service correctly creates a product with a generated ID and saves it. Also include a test case for handling repository errors."
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+[
+  {
+    "timestamp": "2026-02-17T22:56:13.804Z",
+    "contextFiles": [],
+    "tokens": {
+      "input": 262,
+      "output": 8,
+      "total": 270
+    },
+    "model": "gemini-2.5-flash-lite",
+    "durationMs": 794,
+    "requestPayloadSize": 1246,
+    "status": "success"
+  },
+  {
+    "timestamp": "2026-02-17T22:56:20.495Z",
+    "contextFiles": [],
+    "tokens": {
+      "input": 1261,
+      "output": 76,
+      "total": 1741
+    },
+    "model": "gemini-2.5-flash-lite",
+    "durationMs": 4216,
+    "requestPayloadSize": 2507,
+    "status": "success"
+  },
+  {
+    "timestamp": "2026-02-17T22:56:56.617Z",
+    "contextFiles": [],
+    "tokens": {
+      "input": 7123,
+      "output": 43,
+      "total": 7738
+    },
+    "model": "gemini-3-flash-preview",
+    "durationMs": 12160,
+    "requestPayloadSize": 2507,
+    "status": "success"
+  }
+]
