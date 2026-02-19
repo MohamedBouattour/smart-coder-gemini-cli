@@ -83,7 +83,7 @@ ${testRootDir}${path.sep}
     const structure = await getFolderStructure(testRootDir);
     expect(structure.trim()).toBe(
       `
-Showing up to 200 items (files + folders). Folders or files indicated with ... contain more items not shown, were ignored, or the display limit (200 items) was reached.
+Showing up to 200 items (files + folders). Folders or files indicated with ... contain more items not shown, were ignored, depth-limited, or the display limit (200 items) was reached.
 
 ${testRootDir}${path.sep}
 ├───.hiddenfile
@@ -110,7 +110,7 @@ ${testRootDir}${path.sep}
       ignoredFolders: new Set(['subfolderA', 'node_modules']),
     });
     const expected = `
-Showing up to 200 items (files + folders). Folders or files indicated with ... contain more items not shown, were ignored, or the display limit (200 items) was reached.
+Showing up to 200 items (files + folders). Folders or files indicated with ... contain more items not shown, were ignored, depth-limited, or the display limit (200 items) was reached.
 
 ${testRootDir}${path.sep}
 ├───.hiddenfile
@@ -168,7 +168,7 @@ ${testRootDir}${path.sep}
       maxItems: 4,
     });
     const expectedRevised = `
-Showing up to 4 items (files + folders). Folders or files indicated with ... contain more items not shown, were ignored, or the display limit (4 items) was reached.
+Showing up to 4 items (files + folders). Folders or files indicated with ... contain more items not shown, were ignored, depth-limited, or the display limit (4 items) was reached.
 
 ${testRootDir}${path.sep}
 ├───folder-0${path.sep}
@@ -189,7 +189,7 @@ ${testRootDir}${path.sep}
       maxItems: 1,
     });
     const expected = `
-Showing up to 1 items (files + folders). Folders or files indicated with ... contain more items not shown, were ignored, or the display limit (1 items) was reached.
+Showing up to 1 items (files + folders). Folders or files indicated with ... contain more items not shown, were ignored, depth-limited, or the display limit (1 items) was reached.
 
 ${testRootDir}${path.sep}
 ├───fileA1.ts

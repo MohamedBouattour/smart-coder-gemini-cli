@@ -39,14 +39,27 @@ interface FolderStructureOptions {
   fileService?: FileDiscoveryService;
   /** File filtering ignore options. */
   fileFilteringOptions?: FileFilteringOptions;
+  /** Maximum depth to traverse. When set, directories beyond this depth are shown
+   *  as collapsed with file-count annotations. Depth 0 = root only. */
+  maxDepth?: number;
+  /** When true, annotate directories with their total recursive file count. */
+  showDirectoryFileCounts?: boolean;
 }
 // Define a type for the merged options where fileIncludePattern remains optional
 type MergedFolderStructureOptions = Required<
-  Omit<FolderStructureOptions, 'fileIncludePattern' | 'fileService'>
+  Omit<
+    FolderStructureOptions,
+    | 'fileIncludePattern'
+    | 'fileService'
+    | 'maxDepth'
+    | 'showDirectoryFileCounts'
+  >
 > & {
   fileIncludePattern?: RegExp;
   fileService?: FileDiscoveryService;
   fileFilteringOptions?: FileFilteringOptions;
+  maxDepth?: number;
+  showDirectoryFileCounts: boolean;
 };
 
 /** Represents the full, unfiltered information about a folder and its contents. */
@@ -57,7 +70,9 @@ interface FullFolderInfo {
   subFolders: FullFolderInfo[];
   totalChildren: number; // Number of files and subfolders included from this folder during BFS scan
   totalFiles: number; // Number of files included from this folder during BFS scan
+  recursiveFileCount?: number; // Total files in this directory and all subdirectories (for annotations)
   isIgnored?: boolean; // Flag to easily identify ignored folders later
+  isDepthLimited?: boolean; // Flag indicating this folder was not expanded due to maxDepth
   hasMoreFiles?: boolean; // Indicates if files were truncated for this specific folder
   hasMoreSubfolders?: boolean; // Indicates if subfolders were truncated for this specific folder
 }
@@ -65,6 +80,40 @@ interface FullFolderInfo {
 // --- Interfaces ---
 
 // --- Helper Functions ---
+
+/**
+ * Recursively counts the total number of files in a directory.
+ * Used to annotate depth-limited directories with their file count.
+ */
+async function countFilesRecursively(dirPath: string): Promise<number> {
+  let count = 0;
+  const queue = [dirPath];
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    try {
+      const entries = await fs.readdir(current, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.isFile()) {
+          count++;
+        } else if (entry.isDirectory()) {
+          const name = entry.name;
+          // Skip commonly ignored directories for performance
+          if (
+            name !== 'node_modules' &&
+            name !== '.git' &&
+            name !== 'dist' &&
+            name !== '__pycache__'
+          ) {
+            queue.push(path.join(current, name));
+          }
+        }
+      }
+    } catch {
+      // Ignore permission errors or missing directories
+    }
+  }
+  return count;
+}
 
 async function readFullStructure(
   rootPath: string,
@@ -80,16 +129,18 @@ async function readFullStructure(
     totalFiles: 0,
   };
 
-  const queue: Array<{ folderInfo: FullFolderInfo; currentPath: string }> = [
-    { folderInfo: rootNode, currentPath: rootPath },
-  ];
+  const queue: Array<{
+    folderInfo: FullFolderInfo;
+    currentPath: string;
+    depth: number;
+  }> = [{ folderInfo: rootNode, currentPath: rootPath, depth: 0 }];
   let currentItemCount = 0;
   // Count the root node itself as one item if we are not just listing its content
 
   const processedPaths = new Set<string>(); // To avoid processing same path if symlinks create loops
 
   while (queue.length > 0) {
-    const { folderInfo, currentPath } = queue.shift()!;
+    const { folderInfo, currentPath, depth } = queue.shift()!;
 
     if (processedPaths.has(currentPath)) {
       continue;
@@ -209,8 +260,22 @@ async function readFullStructure(
         currentItemCount++;
         folderInfo.totalChildren++; // Counts towards parent's children
 
-        // Add to queue for processing its children later
-        queue.push({ folderInfo: subFolderNode, currentPath: subFolderPath });
+        // Enforce maxDepth: if we've reached the depth limit, don't queue children
+        if (options.maxDepth !== undefined && depth + 1 >= options.maxDepth) {
+          subFolderNode.isDepthLimited = true;
+          // Count files recursively for the annotation
+          if (options.showDirectoryFileCounts) {
+            subFolderNode.recursiveFileCount =
+              await countFilesRecursively(subFolderPath);
+          }
+        } else {
+          // Add to queue for processing its children later
+          queue.push({
+            folderInfo: subFolderNode,
+            currentPath: subFolderPath,
+            depth: depth + 1,
+          });
+        }
       }
     }
     folderInfo.subFolders = subFoldersInCurrentDir;
@@ -240,8 +305,16 @@ function formatStructure(
   // Its children are printed relative to that conceptual root.
   // Ignored root nodes ARE printed with a connector.
   if (!isProcessingRootNode || node.isIgnored) {
+    let annotation = '';
+    if (node.isDepthLimited && node.recursiveFileCount !== undefined) {
+      annotation = ` (${node.recursiveFileCount} files)`;
+    } else if (node.isDepthLimited) {
+      annotation = '';
+    }
+    const truncationSuffix =
+      node.isIgnored || node.isDepthLimited ? TRUNCATION_INDICATOR : '';
     builder.push(
-      `${currentIndent}${connector}${node.name}${path.sep}${node.isIgnored ? TRUNCATION_INDICATOR : ''}`,
+      `${currentIndent}${connector}${node.name}${path.sep}${truncationSuffix}${annotation}`,
     );
   }
 
@@ -286,6 +359,11 @@ function formatStructure(
   if (node.hasMoreSubfolders) {
     builder.push(`${indentForChildren}└───${TRUNCATION_INDICATOR}`);
   }
+
+  // If this node is depth-limited, don't render children (they weren't populated)
+  if (node.isDepthLimited) {
+    return;
+  }
 }
 
 // --- Main Exported Function ---
@@ -311,6 +389,8 @@ export async function getFolderStructure(
     fileService: options?.fileService,
     fileFilteringOptions:
       options?.fileFilteringOptions ?? DEFAULT_FILE_FILTERING_OPTIONS,
+    maxDepth: options?.maxDepth,
+    showDirectoryFileCounts: options?.showDirectoryFileCounts ?? false,
   };
 
   try {
@@ -340,9 +420,16 @@ export async function getFolderStructure(
     }
 
     let summary = `Showing up to ${mergedOptions.maxItems} items (files + folders).`;
+    if (mergedOptions.maxDepth !== undefined) {
+      summary += ` Tree depth limited to ${mergedOptions.maxDepth} levels.`;
+    }
 
     if (isTruncated(structureRoot)) {
-      summary += ` Folders or files indicated with ${TRUNCATION_INDICATOR} contain more items not shown, were ignored, or the display limit (${mergedOptions.maxItems} items) was reached.`;
+      summary += ` Folders or files indicated with ${TRUNCATION_INDICATOR} contain more items not shown, were ignored, depth-limited, or the display limit (${mergedOptions.maxItems} items) was reached.`;
+    }
+
+    if (mergedOptions.maxDepth !== undefined) {
+      summary += ` Use the \`ls\` tool to explore deeper directories.`;
     }
 
     return `${summary}\n\n${resolvedPath}${path.sep}\n${structureLines.join('\n')}`;

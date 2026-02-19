@@ -7,6 +7,7 @@
 import type { Part, Content } from '@google/genai';
 import type { Config } from '../config/config.js';
 import { getFolderStructure } from './getFolderStructure.js';
+import { coreEvents } from './events.js';
 
 export const INITIAL_HISTORY_LENGTH = 1;
 
@@ -20,11 +21,18 @@ export async function getDirectoryContextString(
 ): Promise<string> {
   const workspaceContext = config.getWorkspaceContext();
   const workspaceDirectories = workspaceContext.getDirectories();
+  const smartMode = config.getSmartMode();
 
   const folderStructures = await Promise.all(
     workspaceDirectories.map((dir) =>
       getFolderStructure(dir, {
         fileService: config.getFileService(),
+        ...(smartMode
+          ? {
+              maxDepth: 2,
+              showDirectoryFileCounts: true,
+            }
+          : {}),
       }),
     ),
   );
@@ -32,10 +40,16 @@ export async function getDirectoryContextString(
   const folderStructure = folderStructures.join('\n');
   const dirList = workspaceDirectories.map((dir) => `  - ${dir}`).join('\n');
 
-  return `- **Workspace Directories:**\n${dirList}
+  const result = `- **Workspace Directories:**\n${dirList}
 - **Directory Structure:**
 
 ${folderStructure}`;
+
+  coreEvents.emitConsoleLog(
+    'info',
+    `Context gathering: File tree generated (${result.length.toLocaleString()} chars${smartMode ? ', smart mode: depth=2' : ''}) for ${workspaceDirectories.length} workspace(s)`,
+  );
+  return result;
 }
 
 /**
@@ -69,6 +83,11 @@ ${environmentMemory}
 </session_context>`.trim();
 
   const initialParts: Part[] = [{ text: context }];
+
+  coreEvents.emitConsoleLog(
+    'info',
+    `Context gathering: Session context built (${context.length.toLocaleString()} chars total) — Tree: ${directoryContext.length.toLocaleString()}, Memory: ${environmentMemory.length.toLocaleString()}`,
+  );
 
   return initialParts;
 }

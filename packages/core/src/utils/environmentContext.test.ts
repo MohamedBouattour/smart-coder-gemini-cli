@@ -36,6 +36,7 @@ describe('getDirectoryContextString', () => {
         getDirectories: vi.fn().mockReturnValue(['/test/dir']),
       }),
       getFileService: vi.fn(),
+      getSmartMode: vi.fn().mockReturnValue(false),
       storage: {
         getProjectTempDir: vi.fn().mockReturnValue('/tmp/project-temp'),
       } as unknown as Storage,
@@ -88,6 +89,7 @@ describe('getEnvironmentContext', () => {
         getDirectories: vi.fn().mockReturnValue(['/test/dir']),
       }),
       getFileService: vi.fn(),
+      getSmartMode: vi.fn().mockReturnValue(false),
       getEnvironmentMemory: vi.fn().mockReturnValue('Mock Environment Memory'),
 
       getToolRegistry: vi.fn().mockReturnValue(mockToolRegistry),

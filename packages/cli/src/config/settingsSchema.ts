@@ -1615,6 +1615,16 @@ const SETTINGS_SCHEMA = {
         description: 'Enable planning features (Plan Mode and tools).',
         showInDialog: true,
       },
+      smartMode: {
+        type: 'boolean',
+        label: 'Smart Mode',
+        category: 'Experimental',
+        requiresRestart: true,
+        default: false,
+        description:
+          'Enable Smart Mode for optimized context gathering: depth-limited file tree, JIT retrieval, Scout agent, and reusability checks.',
+        showInDialog: true,
+      },
     },
   },
 

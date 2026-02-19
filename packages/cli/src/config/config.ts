@@ -70,6 +70,7 @@ export interface CliArgs {
   model: string | undefined;
   sandbox: boolean | string | undefined;
   debug: boolean | undefined;
+  smart: boolean | undefined;
   prompt: string | undefined;
   promptInteractive: string | undefined;
 
@@ -111,6 +112,12 @@ export async function parseArguments(
       alias: 'd',
       type: 'boolean',
       description: 'Run in debug mode (open debug console with F12)',
+      default: false,
+    })
+    .option('smart', {
+      type: 'boolean',
+      description:
+        'Enable Smart Mode for optimized context gathering (depth-limited tree, JIT retrieval, Scout agent)',
       default: false,
     })
     .command('$0 [query..]', 'Launch Gemini CLI', (yargsInstance) =>
@@ -428,6 +435,14 @@ export function isDebugMode(argv: CliArgs): boolean {
     [process.env['DEBUG'], process.env['DEBUG_MODE']].some(
       (v) => v === 'true' || v === '1',
     )
+  );
+}
+
+export function isSmartMode(argv: CliArgs, settings: MergedSettings): boolean {
+  return (
+    !!argv.smart ||
+    [process.env['GEMINI_SMART_MODE']].some((v) => v === 'true' || v === '1') ||
+    (settings.experimental?.smartMode ?? false)
   );
 }
 
@@ -749,6 +764,7 @@ export async function loadCliConfig(
     loadMemoryFromIncludeDirectories:
       settings.context?.loadMemoryFromIncludeDirectories || false,
     debugMode,
+    smartMode: isSmartMode(argv, settings),
     question,
 
     coreTools: settings.tools?.core || undefined,

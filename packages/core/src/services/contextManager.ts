@@ -16,6 +16,7 @@ import {
 } from '../utils/memoryDiscovery.js';
 import type { Config } from '../config/config.js';
 import { coreEvents, CoreEvent } from '../utils/events.js';
+import type { MemoryFileDetail } from '../core/benchmarkLogger.js';
 
 export class ContextManager {
   private readonly loadedPaths: Set<string> = new Set();
@@ -23,6 +24,7 @@ export class ContextManager {
   private globalMemory: string = '';
   private extensionMemory: string = '';
   private projectMemory: string = '';
+  private memoryFileDetails: MemoryFileDetail[] = [];
 
   constructor(config: Config) {
     this.config = config;
@@ -33,11 +35,13 @@ export class ContextManager {
    */
   async refresh(): Promise<void> {
     this.loadedPaths.clear();
+    this.memoryFileDetails = [];
     const debugMode = this.config.getDebugMode();
 
     const paths = await this.discoverMemoryPaths(debugMode);
     const contentsMap = await this.loadMemoryContents(paths, debugMode);
 
+    this.buildMemoryFileDetails(paths, contentsMap);
     this.categorizeMemoryContents(paths, contentsMap);
     this.emitMemoryChanged();
   }
@@ -77,14 +81,22 @@ export class ContextManager {
     const filePaths = loadedFiles.map((c) => c.filePath);
 
     if (filePaths.length > 0) {
+      const fileDetails = loadedFiles.map(
+        (c) =>
+          `  ${c.filePath} (${(c.content?.length ?? 0).toLocaleString()} chars)`,
+      );
+      const totalChars = loadedFiles.reduce(
+        (sum, c) => sum + (c.content?.length ?? 0),
+        0,
+      );
       coreEvents.emitConsoleLog(
         'info',
-        `Context gathering: Included ${filePaths.length} files:\n${filePaths.join('\n')}`,
+        `Context gathering: Loaded ${filePaths.length} memory files (${totalChars.toLocaleString()} chars total):\n${fileDetails.join('\n')}`,
       );
     } else {
       coreEvents.emitConsoleLog(
         'info',
-        'Context gathering: No files included.',
+        'Context gathering: No memory files loaded.',
       );
     }
 
@@ -174,5 +186,64 @@ export class ContextManager {
 
   getLoadedPaths(): ReadonlySet<string> {
     return this.loadedPaths;
+  }
+
+  /**
+   * Returns detailed information about each loaded memory file,
+   * including its tier and character count.
+   */
+  getMemoryFileDetails(): readonly MemoryFileDetail[] {
+    return this.memoryFileDetails;
+  }
+
+  /**
+   * Returns a summary of memory sizes by tier.
+   */
+  getMemorySizeBreakdown(): {
+    globalChars: number;
+    extensionChars: number;
+    projectChars: number;
+    totalChars: number;
+    fileCount: number;
+  } {
+    const globalChars = this.globalMemory.length;
+    const extensionChars = this.extensionMemory.length;
+    const projectChars = this.projectMemory.length;
+    return {
+      globalChars,
+      extensionChars,
+      projectChars,
+      totalChars: globalChars + extensionChars + projectChars,
+      fileCount: this.loadedPaths.size,
+    };
+  }
+
+  /**
+   * Builds the detailed file list with tier classification and size.
+   */
+  private buildMemoryFileDetails(
+    paths: { global: string[]; extension: string[]; project: string[] },
+    contentsMap: Map<string, GeminiFileContent>,
+  ): void {
+    const globalSet = new Set(paths.global);
+    const extensionSet = new Set(paths.extension);
+
+    this.memoryFileDetails = [];
+    for (const [filePath, content] of contentsMap) {
+      if (content.content === null) continue;
+
+      let tier: 'global' | 'extension' | 'project' = 'project';
+      if (globalSet.has(filePath)) {
+        tier = 'global';
+      } else if (extensionSet.has(filePath)) {
+        tier = 'extension';
+      }
+
+      this.memoryFileDetails.push({
+        path: filePath,
+        tier,
+        chars: content.content.length,
+      });
+    }
   }
 }

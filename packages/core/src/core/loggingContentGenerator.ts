@@ -36,7 +36,9 @@ import { toContents } from '../code_assist/converter.js';
 import { isStructuredError } from '../utils/quotaErrorDetection.js';
 import { runInDevTraceSpan, type SpanMetadata } from '../telemetry/trace.js';
 import { debugLogger } from '../utils/debugLogger.js';
+import type { BenchmarkLog } from './benchmarkLogger.js';
 import { BenchmarkLogger } from './benchmarkLogger.js';
+import { ideContextStore } from '../ide/ideContext.js';
 
 interface StructuredError {
   status: number;
@@ -194,6 +196,130 @@ export class LoggingContentGenerator implements ContentGenerator {
     );
   }
 
+  /**
+   * Gathers context data for benchmark logging by inspecting
+   * the current state of system prompt, file tree, memory, chat history, and IDE context.
+   */
+  private gatherContextData(
+    contents: Content[],
+  ): BenchmarkLog['contextBreakdown'] & {
+    memoryFiles: BenchmarkLog['memoryFiles'];
+    contextFiles: string[];
+    toolCount: number;
+    compressionTriggered: boolean;
+    ideConnected: boolean;
+  } {
+    const contextManager = this.config.getContextManager();
+
+    // Memory file details
+    const memoryFiles = contextManager?.getMemoryFileDetails()
+      ? [...contextManager.getMemoryFileDetails()]
+      : [];
+
+    // Context files (loaded paths)
+    const contextFiles = contextManager
+      ? Array.from(contextManager.getLoadedPaths())
+      : (this.config.getGeminiMdFilePaths?.() ?? []);
+
+    // Memory size breakdown
+    const memoryBreakdown = contextManager?.getMemorySizeBreakdown();
+    const memoryChars = memoryBreakdown?.totalChars ?? 0;
+
+    // System prompt (approximate from config)
+    // The system instruction is built fresh each call, we estimate from memory sizes
+    const systemPromptChars = memoryChars; // memo portion
+
+    // Chat history analysis
+    let chatHistoryChars = 0;
+    let chatHistoryTurns = 0;
+    for (const content of contents) {
+      chatHistoryTurns++;
+      for (const part of content.parts ?? []) {
+        if ('text' in part && typeof part.text === 'string') {
+          chatHistoryChars += part.text.length;
+        }
+        if ('functionCall' in part) {
+          chatHistoryChars += JSON.stringify(part.functionCall).length;
+        }
+        if ('functionResponse' in part) {
+          chatHistoryChars += JSON.stringify(part.functionResponse).length;
+        }
+      }
+    }
+
+    // File tree: the first user message typically contains <session_context> with the tree
+    let fileTreeChars = 0;
+    let environmentContextChars = 0;
+    if (contents.length > 0 && contents[0].role === 'user') {
+      const firstMsgText = contents[0].parts
+        ?.map((p) => ('text' in p ? (p.text ?? '') : ''))
+        .join('');
+      if (firstMsgText) {
+        environmentContextChars = firstMsgText.length;
+        const treeMatch = firstMsgText.match(
+          /- \*\*Directory Structure:\*\*[\s\S]*?(?=<\/session_context>|$)/,
+        );
+        if (treeMatch) {
+          fileTreeChars = treeMatch[0].length;
+        }
+      }
+    }
+
+    // IDE context
+    const ideContext = ideContextStore.get();
+    const ideConnected = !!ideContext?.workspaceState;
+    const ideContextChars = ideContext ? JSON.stringify(ideContext).length : 0;
+
+    // Tool count
+    let toolCount = 0;
+    try {
+      toolCount = this.config.getToolRegistry()?.getAllToolNames()?.length ?? 0;
+    } catch {
+      // Tool registry may not be available in all contexts
+    }
+
+    return {
+      systemPromptChars,
+      fileTreeChars,
+      memoryChars,
+      environmentContextChars,
+      chatHistoryChars,
+      chatHistoryTurns,
+      ideContextChars,
+      memoryFiles,
+      contextFiles,
+      toolCount,
+      compressionTriggered: false, // Will be set by caller if applicable
+      ideConnected,
+    };
+  }
+
+  /**
+   * Emits a detailed context summary to the console log.
+   */
+  private emitContextSummary(
+    promptId: string,
+    model: string,
+    payloadSize: number,
+    contextData: ReturnType<typeof this.gatherContextData>,
+  ): void {
+    const lines = [
+      `┌─ Generation Request ─────────────────────────`,
+      `│ Prompt ID:     ${promptId}`,
+      `│ Model:         ${model}`,
+      `│ Payload:       ${payloadSize.toLocaleString()} chars`,
+      `│ ┌─ Context Breakdown ───`,
+      `│ │ Environment:  ${contextData.environmentContextChars.toLocaleString()} chars`,
+      `│ │ File Tree:    ${contextData.fileTreeChars.toLocaleString()} chars`,
+      `│ │ Memory:       ${contextData.memoryChars.toLocaleString()} chars (${contextData.memoryFiles.length} files)`,
+      `│ │ Chat History: ${contextData.chatHistoryChars.toLocaleString()} chars (${contextData.chatHistoryTurns} turns)`,
+      `│ │ IDE Context:  ${contextData.ideConnected ? `${contextData.ideContextChars.toLocaleString()} chars` : 'not connected'}`,
+      `│ └─ Tools: ${contextData.toolCount}`,
+      `└──────────────────────────────────────────────`,
+    ];
+    coreEvents.emitConsoleLog('info', lines.join('\n'));
+  }
+
   async generateContent(
     req: GenerateContentParameters,
     userPromptId: string,
@@ -216,9 +342,13 @@ export class LoggingContentGenerator implements ContentGenerator {
           serverDetails,
         );
 
-        coreEvents.emitConsoleLog(
-          'info',
-          `Generation Request: Prompt ID=${userPromptId}, Model=${req.model}, Payload Size=${JSON.stringify(contents).length} chars`,
+        const payloadSize = JSON.stringify(contents).length;
+        const contextData = this.gatherContextData(contents);
+        this.emitContextSummary(
+          userPromptId,
+          req.model,
+          payloadSize,
+          contextData,
         );
 
         try {
@@ -253,22 +383,37 @@ export class LoggingContentGenerator implements ContentGenerator {
           const benchmarkLogger = new BenchmarkLogger(
             this.config.getProjectRoot(),
           );
+          const benchmarkEntry: BenchmarkLog = {
+            timestamp: new Date().toISOString(),
+            promptId: userPromptId,
+            contextFiles: contextData.contextFiles,
+            memoryFiles: contextData.memoryFiles,
+            tokens: {
+              input: response.usageMetadata?.promptTokenCount ?? 0,
+              output: response.usageMetadata?.candidatesTokenCount ?? 0,
+              total: response.usageMetadata?.totalTokenCount ?? 0,
+              cached: response.usageMetadata?.cachedContentTokenCount,
+            },
+            contextBreakdown: {
+              systemPromptChars: contextData.systemPromptChars,
+              fileTreeChars: contextData.fileTreeChars,
+              memoryChars: contextData.memoryChars,
+              environmentContextChars: contextData.environmentContextChars,
+              chatHistoryChars: contextData.chatHistoryChars,
+              chatHistoryTurns: contextData.chatHistoryTurns,
+              ideContextChars: contextData.ideContextChars,
+            },
+            model: response.modelVersion || req.model,
+            durationMs,
+            requestPayloadSize: payloadSize,
+            toolCount: contextData.toolCount,
+            status: 'success',
+            compressionTriggered: contextData.compressionTriggered,
+            ideConnected: contextData.ideConnected,
+            platform: process.platform,
+          };
           benchmarkLogger
-            .log({
-              timestamp: new Date().toISOString(),
-              contextFiles: Array.from(
-                this.config.getContextManager()?.getLoadedPaths() ?? [],
-              ),
-              tokens: {
-                input: response.usageMetadata?.promptTokenCount ?? 0,
-                output: response.usageMetadata?.candidatesTokenCount ?? 0,
-                total: response.usageMetadata?.totalTokenCount ?? 0,
-              },
-              model: response.modelVersion || req.model,
-              durationMs,
-              requestPayloadSize: JSON.stringify(contents).length,
-              status: 'success',
-            })
+            .log(benchmarkEntry)
             .catch((err: unknown) =>
               debugLogger.debug('Failed to log benchmark result', err),
             );
@@ -288,6 +433,43 @@ export class LoggingContentGenerator implements ContentGenerator {
             req.config,
             serverDetails,
           );
+
+          // Also log errors to benchmark
+          const benchmarkLogger = new BenchmarkLogger(
+            this.config.getProjectRoot(),
+          );
+          const benchmarkEntry: BenchmarkLog = {
+            timestamp: new Date().toISOString(),
+            promptId: userPromptId,
+            contextFiles: contextData.contextFiles,
+            memoryFiles: contextData.memoryFiles,
+            tokens: {},
+            contextBreakdown: {
+              systemPromptChars: contextData.systemPromptChars,
+              fileTreeChars: contextData.fileTreeChars,
+              memoryChars: contextData.memoryChars,
+              environmentContextChars: contextData.environmentContextChars,
+              chatHistoryChars: contextData.chatHistoryChars,
+              chatHistoryTurns: contextData.chatHistoryTurns,
+              ideContextChars: contextData.ideContextChars,
+            },
+            model: req.model,
+            durationMs,
+            requestPayloadSize: payloadSize,
+            toolCount: contextData.toolCount,
+            status: 'error',
+            errorMessage:
+              error instanceof Error ? error.message : String(error),
+            compressionTriggered: contextData.compressionTriggered,
+            ideConnected: contextData.ideConnected,
+            platform: process.platform,
+          };
+          benchmarkLogger
+            .log(benchmarkEntry)
+            .catch((err: unknown) =>
+              debugLogger.debug('Failed to log benchmark error', err),
+            );
+
           throw error;
         }
       },
@@ -325,9 +507,14 @@ export class LoggingContentGenerator implements ContentGenerator {
           req.config,
           serverDetails,
         );
-        coreEvents.emitConsoleLog(
-          'info',
-          `Generation Stream Request: Prompt ID=${userPromptId}, Model=${req.model}, Payload Size=${JSON.stringify(contents).length} chars`,
+
+        const payloadSize = JSON.stringify(contents).length;
+        const contextData = this.gatherContextData(contents);
+        this.emitContextSummary(
+          userPromptId,
+          req.model,
+          payloadSize,
+          contextData,
         );
 
         let stream: AsyncGenerator<GenerateContentResponse>;
@@ -407,22 +594,38 @@ export class LoggingContentGenerator implements ContentGenerator {
         .catch((e) => debugLogger.debug('quota refresh failed', e));
 
       const benchmarkLogger = new BenchmarkLogger(this.config.getProjectRoot());
+      const contextData = this.gatherContextData(requestContents);
+      const benchmarkEntry: BenchmarkLog = {
+        timestamp: new Date().toISOString(),
+        promptId: userPromptId,
+        contextFiles: contextData.contextFiles,
+        memoryFiles: contextData.memoryFiles,
+        tokens: {
+          input: lastUsageMetadata?.promptTokenCount ?? 0,
+          output: lastUsageMetadata?.candidatesTokenCount ?? 0,
+          total: lastUsageMetadata?.totalTokenCount ?? 0,
+          cached: lastUsageMetadata?.cachedContentTokenCount,
+        },
+        contextBreakdown: {
+          systemPromptChars: contextData.systemPromptChars,
+          fileTreeChars: contextData.fileTreeChars,
+          memoryChars: contextData.memoryChars,
+          environmentContextChars: contextData.environmentContextChars,
+          chatHistoryChars: contextData.chatHistoryChars,
+          chatHistoryTurns: contextData.chatHistoryTurns,
+          ideContextChars: contextData.ideContextChars,
+        },
+        model: responses[0]?.modelVersion || req.model,
+        durationMs,
+        requestPayloadSize: JSON.stringify(requestContents).length,
+        toolCount: contextData.toolCount,
+        status: 'success',
+        compressionTriggered: contextData.compressionTriggered,
+        ideConnected: contextData.ideConnected,
+        platform: process.platform,
+      };
       benchmarkLogger
-        .log({
-          timestamp: new Date().toISOString(),
-          contextFiles: Array.from(
-            this.config.getContextManager()?.getLoadedPaths() ?? [],
-          ),
-          tokens: {
-            input: lastUsageMetadata?.promptTokenCount ?? 0,
-            output: lastUsageMetadata?.candidatesTokenCount ?? 0,
-            total: lastUsageMetadata?.totalTokenCount ?? 0,
-          },
-          model: responses[0]?.modelVersion || req.model,
-          durationMs,
-          requestPayloadSize: JSON.stringify(requestContents).length,
-          status: 'success',
-        })
+        .log(benchmarkEntry)
         .catch((err: unknown) =>
           debugLogger.debug('Failed to log benchmark result', err),
         );
@@ -438,23 +641,34 @@ export class LoggingContentGenerator implements ContentGenerator {
       spanMetadata.error = error;
       const durationMs = Date.now() - startTime;
       const benchmarkLogger = new BenchmarkLogger(this.config.getProjectRoot());
+      const contextData = this.gatherContextData(requestContents);
+      const benchmarkEntry: BenchmarkLog = {
+        timestamp: new Date().toISOString(),
+        promptId: userPromptId,
+        contextFiles: contextData.contextFiles,
+        memoryFiles: contextData.memoryFiles,
+        tokens: {},
+        contextBreakdown: {
+          systemPromptChars: contextData.systemPromptChars,
+          fileTreeChars: contextData.fileTreeChars,
+          memoryChars: contextData.memoryChars,
+          environmentContextChars: contextData.environmentContextChars,
+          chatHistoryChars: contextData.chatHistoryChars,
+          chatHistoryTurns: contextData.chatHistoryTurns,
+          ideContextChars: contextData.ideContextChars,
+        },
+        model: responses[0]?.modelVersion || req.model,
+        durationMs: Date.now() - startTime,
+        requestPayloadSize: JSON.stringify(requestContents).length,
+        toolCount: contextData.toolCount,
+        status: 'error',
+        errorMessage: String(error),
+        compressionTriggered: contextData.compressionTriggered,
+        ideConnected: contextData.ideConnected,
+        platform: process.platform,
+      };
       benchmarkLogger
-        .log({
-          timestamp: new Date().toISOString(),
-          contextFiles: Array.from(
-            this.config.getContextManager()?.getLoadedPaths() ?? [],
-          ),
-          tokens: {
-            input: undefined,
-            output: undefined,
-            total: undefined,
-          },
-          model: responses[0]?.modelVersion || req.model,
-          durationMs: Date.now() - startTime,
-          requestPayloadSize: JSON.stringify(requestContents).length,
-          status: 'error',
-          errorMessage: String(error),
-        })
+        .log(benchmarkEntry)
         .catch((err: unknown) =>
           debugLogger.debug('Failed to log benchmark result', err),
         );

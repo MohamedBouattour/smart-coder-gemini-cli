@@ -380,6 +380,7 @@ export interface ConfigParameters {
   sandbox?: SandboxConfig;
   targetDir: string;
   debugMode: boolean;
+  smartMode?: boolean;
   question?: string;
 
   coreTools?: string[];
@@ -515,6 +516,7 @@ export class Config {
   private readonly targetDir: string;
   private workspaceContext: WorkspaceContext;
   private readonly debugMode: boolean;
+  private readonly smartMode: boolean;
   private readonly question: string | undefined;
 
   private readonly coreTools: string[] | undefined;
@@ -688,6 +690,7 @@ export class Config {
     this.workspaceContext = new WorkspaceContext(this.targetDir, []);
     this.pendingIncludeDirectories = params.includeDirectories ?? [];
     this.debugMode = params.debugMode;
+    this.smartMode = params.smartMode ?? false;
     this.question = params.question;
 
     this.coreTools = params.coreTools;
@@ -1386,6 +1389,10 @@ export class Config {
 
   getDebugMode(): boolean {
     return this.debugMode;
+  }
+
+  getSmartMode(): boolean {
+    return this.smartMode;
   }
   getQuestion(): string | undefined {
     return this.question;
