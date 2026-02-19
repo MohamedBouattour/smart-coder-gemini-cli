@@ -38,6 +38,7 @@ export default tseslint.config(
       'dist/**',
       'evals/**',
       'packages/test-utils/**',
+      'cli-benchmark/**',
     ],
   },
   eslint.configs.recommended,

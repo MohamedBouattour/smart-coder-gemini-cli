@@ -412,7 +412,8 @@ export class LoggingContentGenerator implements ContentGenerator {
             ideConnected: contextData.ideConnected,
             platform: process.platform,
           };
-          benchmarkLogger
+
+          await benchmarkLogger
             .log(benchmarkEntry)
             .catch((err: unknown) =>
               debugLogger.debug('Failed to log benchmark result', err),
@@ -464,7 +465,8 @@ export class LoggingContentGenerator implements ContentGenerator {
             ideConnected: contextData.ideConnected,
             platform: process.platform,
           };
-          benchmarkLogger
+
+          await benchmarkLogger
             .log(benchmarkEntry)
             .catch((err: unknown) =>
               debugLogger.debug('Failed to log benchmark error', err),
@@ -624,7 +626,8 @@ export class LoggingContentGenerator implements ContentGenerator {
         ideConnected: contextData.ideConnected,
         platform: process.platform,
       };
-      benchmarkLogger
+
+      await benchmarkLogger
         .log(benchmarkEntry)
         .catch((err: unknown) =>
           debugLogger.debug('Failed to log benchmark result', err),
@@ -667,7 +670,7 @@ export class LoggingContentGenerator implements ContentGenerator {
         ideConnected: contextData.ideConnected,
         platform: process.platform,
       };
-      benchmarkLogger
+      await benchmarkLogger
         .log(benchmarkEntry)
         .catch((err: unknown) =>
           debugLogger.debug('Failed to log benchmark result', err),

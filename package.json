@@ -60,8 +60,7 @@
     "release:version": "node scripts/version.js",
     "telemetry": "node scripts/telemetry.js",
     "check:lockfile": "node scripts/check-lockfile.js",
-    "clean": "node scripts/clean.js",
-    "pre-commit": "node scripts/pre-commit.js"
+    "clean": "node scripts/clean.js"
   },
   "overrides": {
     "ink": "npm:@jrichman/ink@6.4.10",
